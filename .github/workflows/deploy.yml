@@ -1,19 +1,25 @@
 name: Deploy to AWS Dev
+
 on:
   push:
     branches:
-      - dev  # Deploy only when changes are pushed to the dev branch
+      - dev
 
 jobs:
-  deploy:
-    name: Deploy to AWS Fargate
+  build-and-push:
+    name: Build and Push to ECR
     runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.set-tag.outputs.tag }}
+    
     steps:
-      # Step 1: Check out the repository
       - name: Checkout code
         uses: actions/checkout@v3
-
-      # Step 2: Configure AWS CLI
+      
+      - name: Set image tag
+        id: set-tag
+        run: echo "tag=${{ github.sha }}" >> $GITHUB_OUTPUT
+      
       - name: Configure AWS CLI
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -23,30 +29,72 @@ jobs:
           aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
           aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
           aws configure set region $AWS_REGION
-
-      # Step 3: Build and Push Docker Image to Amazon ECR
+      
       - name: Build and Push Docker Image
         env:
-          ECR_REPOSITORY: test-deploy    #change to the correct repo name
+          ECR_REPOSITORY: test-deploy
           IMAGE_TAG: ${{ github.sha }}
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
           ECR_URI=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}
-          # Login to ECR
           aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_URI
-          # Build the Docker image
           docker build -t $ECR_URI:$IMAGE_TAG .
           docker tag $ECR_URI:$IMAGE_TAG $ECR_URI:latest
-          # Push the Docker image
           docker push $ECR_URI:$IMAGE_TAG
           docker push $ECR_URI:latest
+          
+      - name: Deployment Ready Notification
+        run: |
+          echo "Image built and pushed to ECR successfully"
+          echo "Waiting for deployment approval..."
+          echo "Image Tag: ${{ github.sha }}"
+          echo "Triggered by: ${{ github.actor }}"
 
-      # Step 4: Force ECS to Use Latest Image Without Registering a New Task Definition
+  deploy-to-dev:
+    name: Deploy to Dev ECS
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    
+    environment:
+      name: development
+    
+    steps:
+      - name: Record Approval
+        run: |
+          echo "Deployment Approved!"
+          echo "Approved by: ${{ github.actor }}"
+          echo "Approval time: $(date)"
+          echo "Image Tag: ${{ needs.build-and-push.outputs.image-tag }}"
+          echo "Branch: ${{ github.ref_name }}"
+      
+      - name: Configure AWS CLI
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+          aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+          aws configure set region $AWS_REGION
+      
       - name: Force ECS Service to Use Latest Image
         env:
           AWS_REGION: ${{ secrets.AWS_REGION }}
-          ECS_CLUSTER: DevCluster           #change to Cluster name
-          ECS_SERVICE: test-deploy-service   #Change to Service name
+          ECS_CLUSTER: DevCluster
+          ECS_SERVICE: test-deploy-service
         run: |
-          aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --force-new-deployment --region $AWS_REGION
+          echo "Deploying to development..."
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE \
+            --force-new-deployment \
+            --region $AWS_REGION
+          echo "Deployment initiated successfully!"
+      
+      - name: Deployment Success Notification
+        run: |
+          echo "Development deployment completed!"
+          echo "Deployed Image Tag: ${{ needs.build-and-push.outputs.image-tag }}"
+          echo "Approved by: ${{ github.actor }}"
+          echo "Completed at: $(date)"
