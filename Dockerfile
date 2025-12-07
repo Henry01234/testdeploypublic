@@ -1,4 +1,4 @@
-# Use the official Node.js runtime as the base image
+# Use the official Node.js runtime as the base image. latest docker commands
 FROM node:20-alpine AS base
 
 # Install dependencies only when needed
