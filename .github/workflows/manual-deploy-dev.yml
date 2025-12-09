@@ -1,0 +1,76 @@
+name: Manual Deploy to Dev
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Image tag to deploy (commit SHA or "latest")'
+        required: true
+        default: 'latest'
+        type: string
+      
+      deployed_by:
+        description: 'Your name (for audit trail)'
+        required: true
+        type: string
+      
+      reason:
+        description: 'Reason for deployment (optional)'
+        required: false
+        type: string
+
+jobs:
+  deploy:
+    name: Deploy to Dev ECS
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Deployment Info
+        run: |
+          echo "=========================================="
+          echo "DEPLOYMENT INITIATED"
+          echo "=========================================="
+          echo "Image Tag: ${{ inputs.image_tag }}"
+          echo "Deployed by: ${{ inputs.deployed_by }}"
+          echo "Triggered by GitHub user: ${{ github.actor }}"
+          echo "Reason: ${{ inputs.reason || 'Not specified' }}"
+          echo "Deployment time: $(date)"
+          echo "=========================================="
+      
+      - name: Configure AWS CLI
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+          aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+          aws configure set region $AWS_REGION
+      
+      - name: Deploy to ECS
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          ECS_CLUSTER: DevCluster
+          ECS_SERVICE: test-deploy-service
+        run: |
+          echo "Deploying image tag: ${{ inputs.image_tag }}"
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE \
+            --force-new-deployment \
+            --region $AWS_REGION
+          echo "ECS deployment initiated successfully!"
+      
+      - name: Deployment Summary
+        run: |
+          echo "=========================================="
+          echo "DEPLOYMENT COMPLETED"
+          echo "=========================================="
+          echo "Image Tag: ${{ inputs.image_tag }}"
+          echo "Deployed by: ${{ inputs.deployed_by }}"
+          echo "GitHub user: ${{ github.actor }}"
+          echo "Reason: ${{ inputs.reason || 'Not specified' }}"
+          echo "Completion time: $(date)"
+          echo "=========================================="
+          echo ""
+          echo "Check ECS console to verify deployment status"
